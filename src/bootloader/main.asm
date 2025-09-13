@@ -229,7 +229,7 @@ protected_mode.main:
 
 ; Checks if CPUID is supported by attempting to flip the ID bit (bit 21 / 22nd bit) in the EFLAGS register. If we can flip it, CPUID is available.
 ; Returns:
-; - CF: 0 if CPU ID is available, otherwise 1.
+; - CF: 1 if CPU ID is available, otherwise 0.
 protected_mode.is_cpu_id_available:
     ; Save used registers.
     push eax
@@ -238,8 +238,9 @@ protected_mode.is_cpu_id_available:
     pushfd
 
     ; Since there are is no instruction for directly modifying the EFLAGS register, use EAX and the stack to modify the EFLAGS register.
-    xor eax, eax
-    or eax, 0b0000_0000_0000_0000_0000_0100_0000_0000
+    pushfd
+    pop eax
+    xor eax, 0b0000_0000_0010_0000_0000_0000_0000_0000
     push eax
     popfd
     pushfd
@@ -248,12 +249,12 @@ protected_mode.is_cpu_id_available:
     ; Restore the EFLAGS register.
     popfd
 
-    and eax, 0b0000_0000_0000_0000_0000_0100_0000_0000
-    stc
+    and eax, 0b0000_0000_0010_0000_0000_0000_0000_0000
+    clc
     jnz .on_cpu_id_available
     
     .on_cpu_id_available:
-        clc
+        stc
 
     ; Restore used registers.
     pop eax
