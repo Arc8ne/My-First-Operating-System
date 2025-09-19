@@ -1,3 +1,4 @@
+#!/usr/bin/env lua
 local utils = require("lua/utils")
 
 local run = utils.run
