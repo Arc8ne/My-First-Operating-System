@@ -33,10 +33,9 @@ if bochs_cfg_file == nil then
 end
 bochs_cfg_file:close()
 
-local bochs_args = {"bochs", "-q", "-f", bochs_cfg_file_path}
+local bochs_cmd = "bochs -q -f " .. bochs_cfg_file_path
 
-if host_os_id == "Windows" then bochs_args:insert(3, "-debugger") end
+-- Insert the `-debugger` flag if running on Windows.
+if host_os_id == "Windows" then bochs_cmd = bochs_cmd:sub(1,9) .. "-debugger" .. bochs_cmd:sub(9) end
 
-run(
-  table.unpack(bochs_args)
-)
+run(bochs_cmd)
