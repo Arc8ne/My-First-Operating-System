@@ -1,7 +1,13 @@
 #!/usr/bin/env lua
 local utils = require("lua/utils")
 
-local run = utils.run
+local host_os_id = utils.get_host_os_id()
+
+local run = function(cmd)
+  if host_os_id == "Windows" then return utils.run("wsl " .. cmd) end
+
+  return utils.run(cmd)
+end
 
 -- Build the bootloader.
 run("nasm -f bin -o bin/bootloader.bin src/bootloader/main.asm")
