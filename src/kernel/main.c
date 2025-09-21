@@ -1,5 +1,3 @@
-#include <stdint.h>
-
-extern void main() {
-    
+extern void kernel_main() {
+  
 }

@@ -12,11 +12,11 @@ end
 -- Build the bootloader.
 run("nasm -f bin -o bin/bootloader.bin src/bootloader/main.asm")
 
--- Build the kernel.
-run("gcc -ffreestanding -fno-pie -m32 -o bin/kernel.bin src/kernel/*.c")
+-- Build the kernel using `clang` as it supports cross-compilation out of the box.
+run("clang -ffreestanding -fno-builtin -nostdlib -nostdinc -T kernel.ld -o bin/kernel.bin src/kernel/*.c")
 
 -- Create a floppy disk image.
-run("dd if=bin/bootloader.bin of=bin/floppy.img")
+run("cat bin/bootloader.bin bin/kernel.bin > bin/floppy.img")
 
 -- We add this since we are simulating a 1_44 floppy disk (i.e. floppy disk with a total size of 1.44 MB).
 run("truncate -s 1440k bin/floppy.img")
