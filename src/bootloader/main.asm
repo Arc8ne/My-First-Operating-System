@@ -21,6 +21,11 @@ real_mode.main:
   mov bx, startup_msg
   call real_mode.print_string
 
+  ; Make sure VGA text mode is enabled.
+  mov ah, 0
+  mov al, 3
+  int 0x10
+
   ; Enter protected mode.
   ; Disable all interrupts (except for non-maskable interrupts which cannot be disabled solely via software).
   cli
@@ -32,12 +37,28 @@ real_mode.main:
   or eax, 1
   mov cr0, eax
 
+  ; Set up segment registers.
+  mov ax, 0x10
+  mov ds, ax
+  mov ss, ax
+
   ; Perform a far jump to selector 0x8 (which is an offset into the GDT that points to a 32-bit protected mode code segment descriptor) to load the CS register with a proper PM32 (protected mode 32-bit) descriptor.
   jmp 0x8:protected_mode.main
 
   .end:
       hlt
       jmp .end
+
+; Returns:
+; - dh: Number of heads.
+; - cl: Number of sectors per track.
+real_mode.get_disk_info:
+
+; Loads data from disk into memory.
+; Params:
+; - ax: LBA
+real_mode.load:
+  
 
 ; Params:
 ; - bx: Address of the string's 1st character.
@@ -221,13 +242,13 @@ real_mode.wait_until_keyboard_output_buffer_is_full:
 bits 32
 
 protected_mode.main:
-  ; mov si, entered_protected_mode_msg
-  ; call protected_mode.print_string
+  mov si, entered_protected_mode_msg
+  call protected_mode.print_string
 
   ; DBG
-  mov dword [0xb8000], 0x07690748
+  ; mov dword [0xb8000], 0x07690748
 
-  call protected_mode.enter_long_mode
+  ; call protected_mode.enter_long_mode
 
   .end:
     hlt
@@ -296,7 +317,7 @@ protected_mode.enter_long_mode:
 
 startup_msg: db "Starting MFOS...", ENDL, 0
 enabled_a20_line_msg: db "Enabled A20 line.", ENDL, 0
-entered_protected_mode_msg: db "E", 0xF
+entered_protected_mode_msg: db "Entered protected mode.", ENDL, 0
 gdt:
   ; The 0th (null) entry.
   dq 0

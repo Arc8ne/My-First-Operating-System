@@ -5,3 +5,4 @@ floppya: 1_44=bin/floppy.img, status=inserted
 boot: floppy
 mouse: enabled=0
 log: bochs-log.txt
+error: action=report

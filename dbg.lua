@@ -10,6 +10,10 @@ bochs_cfg_file_path = "bochs-cfgs/" .. host_os_id:sub(1, 1):lower() .. host_os_i
 local bochs_cmd = "bochs -q -f " .. bochs_cfg_file_path
 
 -- Insert the `-debugger` flag if running on Windows.
-if host_os_id == "Windows" then bochs_cmd = bochs_cmd:sub(1,9) .. "-debugger" .. bochs_cmd:sub(9) end
+if host_os_id == "Windows" then
+  bochs_cmd = bochs_cmd:sub(1,9) .. "-debugger" .. bochs_cmd:sub(9)
+elseif host_os_id == "Linux" then
+  bochs_cmd = "tmux new-session -s bochs \"" .. bochs_cmd .. "\""
+end
 
 run(bochs_cmd)
