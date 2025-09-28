@@ -13,7 +13,7 @@ end
 run("nasm -f bin -o bin/bootloader.bin src/bootloader/main.asm")
 
 -- Build the kernel using `clang` as it supports cross-compilation out of the box.
-run("clang -ffreestanding -fno-builtin -nostdlib -nostdinc -T kernel.ld -o bin/kernel.bin src/kernel/*.c")
+run("clang -m32 -ffreestanding -fno-builtin -nostdlib -fno-PIC -T kernel.ld -o bin/kernel.bin src/kernel/*.c")
 
 -- Create a floppy disk image.
 run("cat bin/bootloader.bin bin/kernel.bin > bin/floppy.img")

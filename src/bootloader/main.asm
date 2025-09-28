@@ -4,6 +4,12 @@ org 0x7c00
 bits 16
 
 %define ENDL 0xd, 0xa
+%define NUM_BYTES_PER_SECTOR 512
+; The reserved space before a stack frame contains:
+; - The return address.
+; - The old value of BP.
+; Note: This only applies in 16-bit mode.
+%define PRE_STACK_FRAME_RESERVED_SPACE_ADDRESS bp + 3
 
 real_mode.main:
   ; Use an intermediary register (i.e. AX) to hold the constant value 0 (that will be copied into the DS and ES registers next) as constant values cannot be directly copied into segment registers (registers with names ending in 'S') (i.e. DS, ES, SS registers).
@@ -15,7 +21,8 @@ real_mode.main:
   ; Set up the stack.
   mov ss, ax
   ; As the stack grows downwards (i.e. from a higher address to a lower address), make it grow downwards from where the bootloader is currently loaded at in memory.
-  mov sp, 0x7c00
+  mov bp, 0x7c00
+  mov sp, bp
 
   ; Print the startup message.
   mov bx, startup_msg
@@ -25,6 +32,16 @@ real_mode.main:
   mov ah, 0
   mov al, 3
   int 0x10
+
+  ; Load 2nd stage / kernel.
+  call real_mode.get_disk_info
+  push 512
+  ; TODO: Compute the size of the 2nd stage / kernel using a macro defined when the `nasm` command is invoked via the command-line.
+  push 65535
+  push 0x7e00
+  xor ch, ch
+  push cx
+  call real_mode.load
 
   ; Enter protected mode.
   ; Disable all interrupts (except for non-maskable interrupts which cannot be disabled solely via software).
@@ -43,22 +60,125 @@ real_mode.main:
   mov ss, ax
 
   ; Perform a far jump to selector 0x8 (which is an offset into the GDT that points to a 32-bit protected mode code segment descriptor) to load the CS register with a proper PM32 (protected mode 32-bit) descriptor.
-  jmp 0x8:protected_mode.main
+  jmp 0x8:0x7e00
 
   .end:
       hlt
       jmp .end
 
 ; Returns:
-; - dh: Number of heads.
 ; - cl: Number of sectors per track.
+; - dh: Number of heads.
 real_mode.get_disk_info:
+  push ax
+  push dx
+
+  mov ah, 0x8
+  xor dl, dl
+  int 0x13
+
+  add dh, 1
+  and cl, 0x3f
+
+  pop dx
+  pop ax
+
+  ret
 
 ; Loads data from disk into memory.
 ; Params:
-; - ax: LBA
+; - Stack (2 bytes): LBA of start of data.
+; - Stack (2 bytes): Number of bytes to load.
+; - Stack (2 bytes): Starting address in memory to load data to.
+; - Stack (2 bytes): Sectors per track.
 real_mode.load:
-  
+  %define STACK_FRAME_RESERVED_SPACE_ADDRESS bp - 10
+  %define LBA_ADDRESS PRE_STACK_FRAME_RESERVED_SPACE_ADDRESS + 7
+  %define NUM_BYTES_TO_LOAD_ADDRESS PRE_STACK_FRAME_RESERVED_SPACE_ADDRESS + 5
+  %define LOAD_START_ADDRESS_ADDRESS PRE_STACK_FRAME_RESERVED_SPACE_ADDRESS + 3
+  %define SECTORS_PER_TRACK_ADDRESS PRE_STACK_FRAME_RESERVED_SPACE_ADDRESS + 1
+
+  ; Save previous state.
+  enter 0, 0
+  push ax
+  push bx
+  push cx
+  push dx
+
+  ; Compute the sector number using the following formula: Sector number = LBA % Sectors per track + 1
+  mov ax, [LBA_ADDRESS]
+  mov bx, [SECTORS_PER_TRACK_ADDRESS]
+  xor dx, dx
+  div bx
+  add dx, 1
+  ; New local variable => Stack (2 bytes): Sector number
+  push dx
+
+  ; Compute the track/cylinder number using the following formula: LBA / (Sectors per track * 2)
+  mov ax, [SECTORS_PER_TRACK_ADDRESS]
+  mov bx, 2
+  mul bx
+  mov bx, ax
+  mov ax, [LBA_ADDRESS]
+  xor dx, dx
+  div bx
+  ; New local variable => Stack (2 bytes): Track/cylinder number
+  push ax
+
+  ; Compute the head number using the following formula: (LBA % (Sectors per track * 2)) / Sectors per track
+  mov ax, [SECTORS_PER_TRACK_ADDRESS]
+  mov bx, 2
+  mul bx
+  mov bx, ax
+  mov ax, [LBA_ADDRESS]
+  xor dx, dx
+  div bx
+  mov ax, dx
+  mov bx, [SECTORS_PER_TRACK_ADDRESS]
+  xor dx, dx
+  div bx
+  ; New local variable => Stack (2 bytes): Head number
+  push ax
+
+  ; Set number of sectors to read.
+  mov ax, [NUM_BYTES_TO_LOAD_ADDRESS]
+  mov bx, NUM_BYTES_PER_SECTOR
+  xor dx, dx
+  div bx
+  add ax, 1
+  ; Set head number.
+  mov dh, [STACK_FRAME_RESERVED_SPACE_ADDRESS - 6]
+  ; Set function.
+  mov ah, 0x2
+  ; Set drive number.
+  xor dl, dl
+  ; Set track/cylinder number.
+  mov ch, [STACK_FRAME_RESERVED_SPACE_ADDRESS - 4]
+  ; Set sector number.
+  mov cl, [STACK_FRAME_RESERVED_SPACE_ADDRESS - 2]
+  ; Set the start and end addresses of the buffer to write the loaded data.
+  mov es, [LOAD_START_ADDRESS_ADDRESS]
+  push ax
+  xor ah, ah
+  mul bx
+  mov bx, es
+  add bx, ax
+  pop ax
+  ; Call the BIOS interrupt.
+  int 0x13
+  ; TODO: Error handling.
+
+  ; Load previous state.
+  add sp, 6
+  pop dx
+  pop cx
+  pop bx
+  pop ax
+  leave
+
+  ret
+
+  %undef RESERVED_SPACE_IN_STACK_FRAME
 
 ; Params:
 ; - bx: Address of the string's 1st character.
@@ -239,81 +359,78 @@ real_mode.wait_until_keyboard_output_buffer_is_full:
 
 ;     ret
 
-bits 32
+; bits 32
 
-protected_mode.main:
-  mov si, entered_protected_mode_msg
-  call protected_mode.print_string
+; protected_mode.main:
+;   mov si, entered_protected_mode_msg
+;   call protected_mode.print_string
 
-  ; DBG
-  ; mov dword [0xb8000], 0x07690748
+;   ; call protected_mode.enter_long_mode
 
-  ; call protected_mode.enter_long_mode
+;   .end:
+;     hlt
+;     jmp .end
 
-  .end:
-    hlt
-    jmp .end
+; ; Params:
+; ; - si: Address of the string to print.
+; protected_mode.print_string:
+;   mov [0xb8000], si
 
-; Params:
-; - si: Address of the string to print.
-protected_mode.print_string:
-  mov [0xb8000], si
+;   .end:
+;     ret
 
-  .end:
-    ret
+; ; Checks if CPUID is supported by attempting to flip the ID bit (bit 21 / 22nd bit) in the EFLAGS register. If we can flip it, CPUID is available.
+; ; Returns:
+; ; - CF: 1 if CPU ID is available, otherwise 0.
+; protected_mode.is_cpu_id_available:
+;   ; Save used registers.
+;   push eax
 
-; Checks if CPUID is supported by attempting to flip the ID bit (bit 21 / 22nd bit) in the EFLAGS register. If we can flip it, CPUID is available.
-; Returns:
-; - CF: 1 if CPU ID is available, otherwise 0.
-protected_mode.is_cpu_id_available:
-  ; Save used registers.
-  push eax
+;   ; Save the EFLAGS register.
+;   pushfd
 
-  ; Save the EFLAGS register.
-  pushfd
+;   ; Since there are is no instruction for directly modifying the EFLAGS register, use EAX and the stack to modify the EFLAGS register.
+;   pushfd
+;   pop eax
+;   xor eax, 0b0000_0000_0010_0000_0000_0000_0000_0000
+;   push eax
+;   popfd
+;   pushfd
+;   pop eax
 
-  ; Since there are is no instruction for directly modifying the EFLAGS register, use EAX and the stack to modify the EFLAGS register.
-  pushfd
-  pop eax
-  xor eax, 0b0000_0000_0010_0000_0000_0000_0000_0000
-  push eax
-  popfd
-  pushfd
-  pop eax
+;   ; Restore the EFLAGS register.
+;   popfd
 
-  ; Restore the EFLAGS register.
-  popfd
-
-  and eax, 0b0000_0000_0010_0000_0000_0000_0000_0000
-  clc
-  jnz .on_cpu_id_available
+;   and eax, 0b0000_0000_0010_0000_0000_0000_0000_0000
+;   clc
+;   jnz .on_cpu_id_available
   
-  .on_cpu_id_available:
-    stc
+;   .on_cpu_id_available:
+;     stc
 
-  ; Restore used registers.
-  pop eax
+;   ; Restore used registers.
+;   pop eax
 
-protected_mode.is_long_mode_extended_function_available:
-  call protected_mode.is_cpu_id_available
-  jc .end
+; protected_mode.is_long_mode_extended_function_available:
+;   call protected_mode.is_cpu_id_available
+;   jc .end
 
-  .end:
-    ret
+;   .end:
+;     ret
 
-protected_mode.is_long_mode_available:
-  call protected_mode.is_long_mode_extended_function_available
-  jc .end
+; protected_mode.is_long_mode_available:
+;   call protected_mode.is_long_mode_extended_function_available
+;   jc .end
 
-  .end:
-    ret
+;   .end:
+;     ret
 
-protected_mode.enter_long_mode:
-  call protected_mode.is_long_mode_available
-  jc .end
+; protected_mode.enter_long_mode:
+;   call protected_mode.is_long_mode_available
+;   jc .end
 
-  .end:
-    ret
+;   .end:
+;     ret
 
 startup_msg: db "Starting MFOS...", ENDL, 0
 enabled_a20_line_msg: db "Enabled A20 line.", ENDL, 0
