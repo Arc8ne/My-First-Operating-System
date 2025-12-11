@@ -4,12 +4,23 @@ org 0x7c00
 bits 16
 
 %define ENDL 0xd, 0xa
+%define BREAK xchg bx, bx
 %define NUM_BYTES_PER_SECTOR 512
 ; The reserved space before a stack frame contains:
 ; - The return address.
 ; - The old value of BP.
 ; Note: This only applies in 16-bit mode.
 %define PRE_STACK_FRAME_RESERVED_SPACE_ADDRESS bp + 3
+
+%macro INIT_STACK_FRAME 0
+  push bp
+  mov bp, sp
+%endmacro
+
+%macro DEINIT_STACK_FRAME 0
+  mov sp, bp
+  pop bp
+%endmacro
 
 real_mode.main:
   ; Use an intermediary register (i.e. AX) to hold the constant value 0 (that will be copied into the DS and ES registers next) as constant values cannot be directly copied into segment registers (registers with names ending in 'S') (i.e. DS, ES, SS registers).
@@ -25,7 +36,7 @@ real_mode.main:
   mov sp, bp
 
   ; Print the startup message.
-  mov bx, startup_msg
+  mov si, startup_msg
   call real_mode.print_string
 
   ; Make sure VGA text mode is enabled.
@@ -34,14 +45,38 @@ real_mode.main:
   int 0x10
 
   ; Load 2nd stage / kernel.
+  ; TODO: Derive value from a macro defined via the command-line.
+  mov al, 128
+  xor dx, dx
+  mov es, dx
+  mov bx, 0x7e00
   call real_mode.get_disk_info
-  push 512
-  ; TODO: Compute the size of the 2nd stage / kernel using a macro defined when the `nasm` command is invoked via the command-line.
-  push 65535
-  push 0x7e00
+  ; Allocate space on the stack for the result struct populated by the function being called below.
+  sub sp, 4
+  mov word [bp], 0
+  mov word [bp - 2], 0
+  ; ---
+  push 1
   xor ch, ch
   push cx
-  call real_mode.load
+  shr dx, 8
+  push dx
+  sub bp, 4
+  push bp
+  add bp, 4
+  call real_mode.get_chs_address_from_lba
+  add sp, 6
+  ; Call the interrupt to read disk sectors.
+  mov ah, 2
+  mov al, KERNEL_SIZE_IN_SECTORS
+  mov ch, [bp - 4]
+  mov dh, [bp - 2]
+  mov cl, [bp - 1]
+  mov dl, 0
+  push 0
+  pop es
+  mov bx, 0x7e00
+  int 0x13
 
   ; Enter protected mode.
   ; Disable all interrupts (except for non-maskable interrupts which cannot be disabled solely via software).
@@ -71,7 +106,6 @@ real_mode.main:
 ; - dh: Number of heads.
 real_mode.get_disk_info:
   push ax
-  push dx
 
   mov ah, 0x8
   xor dl, dl
@@ -80,9 +114,62 @@ real_mode.get_disk_info:
   add dh, 1
   and cl, 0x3f
 
-  pop dx
   pop ax
 
+  ret
+
+; Params:
+; - Stack (2 bytes): LBA
+; - Stack (2 bytes): Number of sectors per track
+; - Stack (2 bytes): Number of heads per cylinder
+; - Stack (2 bytes):
+;  - Address of a struct containing the following fields:
+;   - Cylinder number (2 bytes)
+;   - Head number (1 byte)
+;   - Sector number (1 byte)
+real_mode.get_chs_address_from_lba:
+  %define LBA_ADDRESS bp + 10
+  %define NUM_HEADS_PER_CYLINDER_ADDRESS bp + 8
+  %define NUM_SECTORS_PER_TRACK_ADDRESS bp + 6
+  %define RESULT_PTR_ADDRESS bp + 4
+
+  INIT_STACK_FRAME
+  push ax
+  push bx
+  push cx
+  push dx
+
+  ; BX will contain the address of the result struct.
+  mov bx, [RESULT_PTR_ADDRESS]
+
+  ; Compute cylinder number.
+  mov ax, [NUM_HEADS_PER_CYLINDER_ADDRESS]
+  mul word [NUM_SECTORS_PER_TRACK_ADDRESS]
+  mov cx, ax
+  mov ax, [LBA_ADDRESS]
+  div cx
+  mov [bx], ax
+
+  ; Compute head number.
+  mov ax, [LBA_ADDRESS]
+  xor dx, dx
+  div word [NUM_SECTORS_PER_TRACK_ADDRESS]
+  xor dx, dx
+  div word [NUM_HEADS_PER_CYLINDER_ADDRESS]
+  mov [bx + 2], dx
+
+  ; Compute sector number.
+  mov ax, [LBA_ADDRESS]
+  xor dx, dx
+  div word [NUM_SECTORS_PER_TRACK_ADDRESS]
+  add dx, 1
+  mov [bx + 3], dx
+
+  pop dx
+  pop cx
+  pop bx
+  pop ax
+  DEINIT_STACK_FRAME
   ret
 
 ; Loads data from disk into memory.
@@ -91,114 +178,113 @@ real_mode.get_disk_info:
 ; - Stack (2 bytes): Number of bytes to load.
 ; - Stack (2 bytes): Starting address in memory to load data to.
 ; - Stack (2 bytes): Sectors per track.
-real_mode.load:
-  %define STACK_FRAME_RESERVED_SPACE_ADDRESS bp - 10
-  %define LBA_ADDRESS PRE_STACK_FRAME_RESERVED_SPACE_ADDRESS + 7
-  %define NUM_BYTES_TO_LOAD_ADDRESS PRE_STACK_FRAME_RESERVED_SPACE_ADDRESS + 5
-  %define LOAD_START_ADDRESS_ADDRESS PRE_STACK_FRAME_RESERVED_SPACE_ADDRESS + 3
-  %define SECTORS_PER_TRACK_ADDRESS PRE_STACK_FRAME_RESERVED_SPACE_ADDRESS + 1
-
-  ; Save previous state.
-  enter 0, 0
-  push ax
-  push bx
-  push cx
-  push dx
-
-  ; Compute the sector number using the following formula: Sector number = LBA % Sectors per track + 1
-  mov ax, [LBA_ADDRESS]
-  mov bx, [SECTORS_PER_TRACK_ADDRESS]
-  xor dx, dx
-  div bx
-  add dx, 1
-  ; New local variable => Stack (2 bytes): Sector number
-  push dx
-
-  ; Compute the track/cylinder number using the following formula: LBA / (Sectors per track * 2)
-  mov ax, [SECTORS_PER_TRACK_ADDRESS]
-  mov bx, 2
-  mul bx
-  mov bx, ax
-  mov ax, [LBA_ADDRESS]
-  xor dx, dx
-  div bx
-  ; New local variable => Stack (2 bytes): Track/cylinder number
-  push ax
-
-  ; Compute the head number using the following formula: (LBA % (Sectors per track * 2)) / Sectors per track
-  mov ax, [SECTORS_PER_TRACK_ADDRESS]
-  mov bx, 2
-  mul bx
-  mov bx, ax
-  mov ax, [LBA_ADDRESS]
-  xor dx, dx
-  div bx
-  mov ax, dx
-  mov bx, [SECTORS_PER_TRACK_ADDRESS]
-  xor dx, dx
-  div bx
-  ; New local variable => Stack (2 bytes): Head number
-  push ax
-
-  ; Set number of sectors to read.
-  mov ax, [NUM_BYTES_TO_LOAD_ADDRESS]
-  mov bx, NUM_BYTES_PER_SECTOR
-  xor dx, dx
-  div bx
-  add ax, 1
-  ; Set head number.
-  mov dh, [STACK_FRAME_RESERVED_SPACE_ADDRESS - 6]
-  ; Set function.
-  mov ah, 0x2
-  ; Set drive number.
-  xor dl, dl
-  ; Set track/cylinder number.
-  mov ch, [STACK_FRAME_RESERVED_SPACE_ADDRESS - 4]
-  ; Set sector number.
-  mov cl, [STACK_FRAME_RESERVED_SPACE_ADDRESS - 2]
-  ; Set the start and end addresses of the buffer to write the loaded data.
-  mov es, [LOAD_START_ADDRESS_ADDRESS]
-  push ax
-  xor ah, ah
-  mul bx
-  mov bx, es
-  add bx, ax
-  pop ax
-  ; Call the BIOS interrupt.
-  int 0x13
-  ; TODO: Error handling.
-
-  ; Load previous state.
-  add sp, 6
-  pop dx
-  pop cx
-  pop bx
-  pop ax
-  leave
-
-  ret
-
-  %undef RESERVED_SPACE_IN_STACK_FRAME
+; real_mode.load:
+;   %define STACK_FRAME_RESERVED_SPACE_ADDRESS bp - 10
+;   %define LBA_ADDRESS PRE_STACK_FRAME_RESERVED_SPACE_ADDRESS + 7
+;   %define NUM_BYTES_TO_LOAD_ADDRESS PRE_STACK_FRAME_RESERVED_SPACE_ADDRESS + 5
+;   %define LOAD_START_ADDRESS_ADDRESS PRE_STACK_FRAME_RESERVED_SPACE_ADDRESS + 3
+;   %define SECTORS_PER_TRACK_ADDRESS PRE_STACK_FRAME_RESERVED_SPACE_ADDRESS + 1
+;
+;   ; Save previous state.
+;   enter 0, 0
+;   push ax
+;   push bx
+;   push cx
+;   push dx
+;
+;   ; Compute the sector number using the following formula: Sector number = LBA % Sectors per track + 1
+;   mov ax, [LBA_ADDRESS]
+;   mov bx, [SECTORS_PER_TRACK_ADDRESS]
+;   xor dx, dx
+;   div bx
+;   add dx, 1
+;   ; New local variable => Stack (2 bytes): Sector number
+;   push dx
+;
+;   ; Compute the track/cylinder number using the following formula: LBA / (Sectors per track * 2)
+;   mov ax, [SECTORS_PER_TRACK_ADDRESS]
+;   mov bx, 2
+;   mul bx
+;   mov bx, ax
+;   mov ax, [LBA_ADDRESS]
+;   xor dx, dx
+;   div bx
+;   ; New local variable => Stack (2 bytes): Track/cylinder number
+;   push ax
+;
+;   ; Compute the head number using the following formula: (LBA % (Sectors per track * 2)) / Sectors per track
+;   mov ax, [SECTORS_PER_TRACK_ADDRESS]
+;   mov bx, 2
+;   mul bx
+;   mov bx, ax
+;   mov ax, [LBA_ADDRESS]
+;   xor dx, dx
+;   div bx
+;   mov ax, dx
+;   mov bx, [SECTORS_PER_TRACK_ADDRESS]
+;   xor dx, dx
+;   div bx
+;   ; New local variable => Stack (2 bytes): Head number
+;   push ax
+;
+;   ; Set the number of the segment to write the loaded data to.
+;   xor ax, ax
+;   mov es, ax
+;   ; Set number of sectors to read.
+;   mov ax, [NUM_BYTES_TO_LOAD_ADDRESS]
+;   mov bx, [LOAD_START_ADDRESS_ADDRESS]
+;   xor dx, dx
+;   div bx
+;   add ax, 1
+;   ; Set head number.
+;   mov dh, [STACK_FRAME_RESERVED_SPACE_ADDRESS - 6]
+;   ; Set function.
+;   mov ah, 0x2
+;   ; Set track/cylinder number.
+;   mov ch, [STACK_FRAME_RESERVED_SPACE_ADDRESS - 4]
+;   ; Set sector number.
+;   mov cl, [STACK_FRAME_RESERVED_SPACE_ADDRESS - 2]
+;   ; Set drive number.
+;   xor dl, dl
+;   ; Call the BIOS interrupt.
+;   int 0x13
+;   ; TODO: Error handling.
+;
+;   ; Load previous state.
+;   add sp, 6
+;   pop dx
+;   pop cx
+;   pop bx
+;   pop ax
+;   leave
+;
+;   ret
+;
+;   %undef RESERVED_SPACE_IN_STACK_FRAME
 
 ; Params:
-; - bx: Address of the string's 1st character.
+; - si: Address of the string's 1st character.
 real_mode.print_string:
   ; Save registers.
   push ax
   push bx
+  push si
 
   mov ah, 0xe
+  mov bh, 0
+  mov bl, 0xf
 
   .loop:
-      mov al, [bx]
+      mov al, [si]
       test al, al
       jz .end
       int 0x10
-      add bx, 1
+      add si, 1
       jmp .loop
 
   .end:
       ; Restore registers.
+      pop si
       pop bx
       pop ax
 

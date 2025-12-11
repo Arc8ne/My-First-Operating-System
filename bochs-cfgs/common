@@ -1,0 +1,9 @@
+megs: 128
+romimage: file="$BXSHARE/BIOS-bochs-latest", address=0xfffe0000
+vgaromimage: file="$BXSHARE/VGABIOS-lgpl-latest"
+floppya: 1_44=bin/floppy.img, status=inserted
+boot: floppy
+mouse: enabled=0
+log: bochs-log.txt
+error: action=report
+magic_break: enabled=1
