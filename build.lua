@@ -5,6 +5,10 @@ local run = function(cmd)
   if host_os_id == "Windows" then return utils.run("wsl " .. cmd) end
   return utils.run(cmd)
 end
+local exit_if_fail = function(cmd)
+  local exit_code = run(cmd)
+  if exit_code ~= 0 then os.exit(exit_code) end
+end
 local get_num_bytes_in_file = function(file_path)
   local file, _ = io.open(file_path, "rb")
   local start_pos = file:seek()
@@ -14,15 +18,23 @@ local get_num_bytes_in_file = function(file_path)
   return num_bytes_in_file
 end
 -- Build the kernel using `clang` as it supports cross-compilation out of the box.
-run("clang -m32 -ffreestanding -fno-builtin -nostdlib -fno-PIC -T kernel.ld -o bin/kernel.bin src/kernel/*.c")
+exit_if_fail("clang -m32 -ffreestanding -fno-builtin -nostdlib -fno-PIC -T kernel.ld -o bin/kernel.bin src/kernel/*.c")
+-- Build the 2nd stage (i.e. post-MBR) of the bootloader.
 local num_bytes_per_sector = 512
 local kernel_binary_size_in_bytes = get_num_bytes_in_file("bin/kernel.bin")
 local kernel_binary_size_in_sectors = math.ceil(
   kernel_binary_size_in_bytes / num_bytes_per_sector
 )
--- Build the bootloader.
-run("nasm -f bin -o bin/bootloader.bin -d KERNEL_SIZE_IN_SECTORS=" .. kernel_binary_size_in_sectors .. " src/bootloader/main.asm")
+exit_if_fail("nasm -f bin -o bin/bootloader/2nd-stage.bin -d KERNEL_SIZE_IN_SECTORS=" .. kernel_binary_size_in_sectors .. " src/bootloader/2nd-stage/main.asm")
+local bootloader_stage_2_binary_size_in_bytes = get_num_bytes_in_file("bin/bootloader/2nd-stage.bin")
+local bootloader_stage_2_binary_size_in_sectors = math.ceil(
+  bootloader_stage_2_binary_size_in_bytes / num_bytes_per_sector
+)
+exit_if_fail("truncate -s " .. bootloader_stage_2_binary_size_in_sectors * num_bytes_per_sector .. " bin/bootloader/2nd-stage.bin")
+-- Build the 1st stage (i.e. MBR) of the bootloader.
+exit_if_fail("nasm -f bin -o bin/bootloader/1st-stage.bin -d BOOTLOADER_STAGE_2_SIZE_IN_SECTORS=" .. bootloader_stage_2_binary_size_in_sectors .. " src/bootloader/1st-stage/main.asm")
 -- Create a floppy disk image.
-run("cat bin/bootloader.bin bin/kernel.bin > bin/floppy.img")
+exit_if_fail("cat bin/bootloader/1st-stage.bin bin/bootloader/2nd-stage.bin bin/kernel.bin > bin/floppy.img")
 -- We add this since we are simulating a 1_44 floppy disk (i.e. floppy disk with a total size of 1.44 MB).
-run("truncate -s 1440k bin/floppy.img")
+exit_if_fail("truncate -s 1440k bin/floppy.img")
+utils.print_green_text("Build succeeded.")

@@ -2,6 +2,63 @@ Assemble the bootloader's assembly code into a flat binary that can then be used
 
 Use the ExFAT filesystem for now.
 
+# Steps
+1. The bootloader's 1st stage (512 bytes in size) loads its 2nd stage.
+1. Control is passed over to the bootloader's 2nd stage.
+1. The bootloader's 2nd stage completes the tasks that can only be done via Assembly code in real (16-bit) mode.
+1. The bootloader's 2nd stage loads the kernel into memory.
+1. The bootloader's 2nd stage enables long (64-bit) mode if it is supported by the device, otherwise it enables protected (32-bit) mode if it is supported by the device, otherwise it ends execution with a message indicating that the device is not supported.
+1. Control is passed over to the kernel.
+1. The kernel completes the tasks that it needs to perform.
+
+## Note
+The bootloader is split in to 2 stages because more space is needed to contain the code that allows it to complete all the necessary tasks.
+
+# Requirements that a kernel should meet so that it can be loaded by a custom bootloader or an existing bootloader (e.g. GRUB)
+1. Kernel should be multiboot compliant.
+1. Kernel should be a file (either a raw binary file or an ELF executable) in a filesystem (i.e. FAT16, FAT32, ext4 etc.).
+
+# Bootloader sequence checklist
+- Setup 16-bit segment registers and stack. [Done, A, R]
+- Print startup message. [Done]
+- Check presence of PCI, CPUID, MSRs.
+  - PCI
+  - CPUID
+  - MSRs
+- Enable and confirm enabled A20 line. [Done, A]
+- Load GDTR. [Done, A]
+- Inform BIOS of target processor mode. [Done, A, R]
+- Get memory map from BIOS. [R]
+- Locate kernel in filesystem.
+- Allocate memory to load kernel image. [Done, A]
+- Load kernel image into buffer. [Done, A]
+- Enable graphics mode. [R]
+- Check kernel image ELF headers.
+- Enable long mode, if 64-bit. [A]
+- Allocate and map memory for kernel segments.
+- Setup stack. [Done, A]
+- Setup COM serial output port. [R]
+- Setup IDT. [A]
+- Disable PIC.
+- Check presence of CPU features (NX, SMEP, x87, PCID, global pages, TCE, WP, MMX, SSE, SYSCALL), and enable them.
+- Assign a PAT to write combining.
+- Setup FS/GS base.
+- Load IDTR. [A]
+- Enable APIC and setup using information in ACPI tables. [A]
+- Setup GDT and TSS. [A]
+
+## Legend
+A: Can only be done using Assembly code.
+R: Can only be done in real (16-bit) mode.
+
+## PCI presence check
+The ordered list of methods below can be used to check if the PCI is present:
+1. Call the BIOS 0x1a interrupt.
+2. ACPI
+3. Assume its there and if not then inform the user that their computer is not supported.
+
+# TODOs
+
 # Relevant information about `nasm`
 The 1st argument is the path to the file containing the assembly code that we want to assemble.
 
@@ -24,17 +81,6 @@ Cylinder and track refer to the same thing.
 Sectors per track: 18 (0x12)
 Heads per cylinder: 2
 
-# BP and SP registers
-When the `push` instruction is executed, the value of SP is first updated and then the pushed value is written to the new location pointed to by SP.
-
-BP points to the 1st byte of the lowermost item of the stack.
-
-SP points to the 1st byte of the topmost item of the stack.
-
-When the stack is empty, BP and SP point to the same location in memory.
-
-This does not just apply to real (16-bit) mode, but also to other modes (i.e. protected/32-bit mode, 64-bit mode).
-
 # LBA to CHS addressing scheme conversion formula
 C = LBA / (HPC * SPT)
 H = (LBA / SPT) % HPC
@@ -45,8 +91,6 @@ C: Cylinder number
 LBA: Logical Block Address
 HPC: Heads Per Cylinder
 SPT: Sectors Per Track
-
-# TODOs
 
 # Misc
 ## Workings
@@ -65,21 +109,27 @@ C: Cylinder number
 H: Head number
 S: Sector number
 
-## Discarded workings
-LBA: 512
-
-CHS:
-- Cylinder number = LBA / (Sectors per track * 2) = 512 / (18 * 2) = 14 (0xE)
-- Head number = (LBA % (Sectors per track * 2)) / Sectors per track = (512 % (18 * 2)) / 18 = 0 (0x0)
-- Sector number = LBA % Sectors per track + 1 = 512 % 18 + 1 = 9 (0x9)
-
-`int 0x13` parameters:
+### `int 0x13` parameters:
 - AH: 2
-- AL: <To be directly specified via a constant defined when invoking `nasm`>
+- AL: <Number of sectors to load>
+  - To be directly specified via a constant defined when invoking `nasm`.
   - Note: A constant is used to optimize away calculations that could be done at compile-time instead of run-time, reducing the size of the bootloader binary and the number of instructions in the bootloader.
-- CH: <Cylinder number that needs to be calculated at run-time since the number of sectors per track (part of the drive geometry information) can only be known at run-time>
-- CL: <Sector number that needs to be calculated at run-time since the number of sectors per track can only be known at run-time>
-- DH: <Head number that needs to be calculated at run-time since the number of sectors per track can only be known at run-time>
-- DL: 0x0 (Might need to be evaluated at run-time as well though it is not needed now)
+- CH: <Cylinder number>
+  - Needs to be calculated at run-time since the number of sectors per track (part of the drive geometry information) can only be known at run-time.
+- CL: <Sector number>
+  - Needs to be calculated at run-time since the number of sectors per track can only be known at run-time.
+- DH: <Head number>
+  - Needs to be calculated at run-time since this value can only be known at run-time.
+- DL: 0x0
+  - Might need to be evaluated at run-time as well though it is not needed now.
 - ES: 0
 - BX: 0x7E00
+
+### Formulas and workings for deriving the offset in the VGA text buffer to the next line
+Current VGA text buffer offset = 0
+Current row number = Current VGA text buffer offset % (Number of bytes per row - 1) = 0 % (160 -1) = 0 % 159 = 0
+Next row number = Current row number + 1 = 0 + 1 = 1
+Offset to start of next line in VGA text buffer = Next row number * Number of bytes per row = 1 * 160 = 160
+
+###
+To prevent weird behavior involving memory offsets/addresses being off by a couple of bytes causing other strange issues like global variables not being initialized to their specified values and C-style strings starting a few bytes after where they actually start from, ensure that the memory address at which the kernel is loaded at is divisible by 16 (i.e. aligned to 16 bytes).

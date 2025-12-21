@@ -24,4 +24,8 @@ exports.get_host_os_id = function()
   return "Unknown"
 end
 
+exports.print_green_text = function(text)
+  print("\27[32m" .. text .. "\27[0m")
+end
+
 return exports
