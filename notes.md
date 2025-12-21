@@ -92,6 +92,29 @@ LBA: Logical Block Address
 HPC: Heads Per Cylinder
 SPT: Sectors Per Track
 
+# Formulas and workings for deriving the offset in the VGA text buffer to the next line
+Current VGA text buffer offset = 0
+Current row number = Current VGA text buffer offset % (Number of bytes per row - 1) = 0 % (160 -1) = 0 % 159 = 0
+Next row number = Current row number + 1 = 0 + 1 = 1
+Offset to start of next line in VGA text buffer = Next row number * Number of bytes per row = 1 * 160 = 160
+
+# Bug/issue reports
+## 1
+Issues:
+- The 1st couple (i.e. 6) characters of the kernel startup message were not being printed to the screen.
+  - Upon inspection of the kernel's disassembly using both `bochs` and `ndisasm`, it was observed that the address of the kernel startup message did not point to the start of the string but to a character that was a few bytes after the 1st character which was (why the 1st couple of characters were not being printed to the screen).
+- Top-level initialization of a global variable was not occurring and the global variable had to be manually initialized in the kernel's entrypoint function or else it would contain a garbage value (as a result of not being initialized).
+
+Relevant context:
+- The kernel was being loaded at `0x800a` in memory.
+- The kernel was written in C, `clang` was used to compile it, and `ld` with a custom linker script was being used to link it and explicitly control the ordering of sections within the resulting binary file.
+
+Fix: Load the kernel at a memory address that is divisible by 16 (i.e. aligned to 16 bytes). For example, instead of loading the kernel at `0x800a` (which is not divisible by 16) in memory, load it at `0x8010` in memory instead.
+
+Explanation of the fix:
+- Since the 1st 6 characters of the kernel startup message were not being printed to the screen, the memory address of the kernel startup message string was 6 bytes ahead of the actual location, since `0x800a + 6 = 0x8010`, the kernel should be loaded at `0x8010` instead.
+- Although the kernel's starting address was explicitly specified in the custom linker script, it might be possible that the linker adjusted the memory addresses of the variables and literals in the C code (i.e. the global variable and the kernel startup message string literal) to use a sane alignment, thus causing their memory addresses to be incorrect (more specifically off by a few bytes).
+
 # Misc
 ## Workings
 SPT: 18 (0x12)
@@ -109,7 +132,7 @@ C: Cylinder number
 H: Head number
 S: Sector number
 
-### `int 0x13` parameters:
+## `int 0x13` parameters:
 - AH: 2
 - AL: <Number of sectors to load>
   - To be directly specified via a constant defined when invoking `nasm`.
@@ -124,12 +147,3 @@ S: Sector number
   - Might need to be evaluated at run-time as well though it is not needed now.
 - ES: 0
 - BX: 0x7E00
-
-### Formulas and workings for deriving the offset in the VGA text buffer to the next line
-Current VGA text buffer offset = 0
-Current row number = Current VGA text buffer offset % (Number of bytes per row - 1) = 0 % (160 -1) = 0 % 159 = 0
-Next row number = Current row number + 1 = 0 + 1 = 1
-Offset to start of next line in VGA text buffer = Next row number * Number of bytes per row = 1 * 160 = 160
-
-###
-To prevent weird behavior involving memory offsets/addresses being off by a couple of bytes causing other strange issues like global variables not being initialized to their specified values and C-style strings starting a few bytes after where they actually start from, ensure that the memory address at which the kernel is loaded at is divisible by 16 (i.e. aligned to 16 bytes).
