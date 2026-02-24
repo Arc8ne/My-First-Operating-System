@@ -1,3 +1,18 @@
+; This part of the bootloader's 2nd stage does whatever needs to be done in real mode before switching to protected mode and then transferring control over to the part of itself that is written in C.
+; The tasks that this part of the bootloader's 2nd stage completes are:
+; - Setting up the 16-bit segment registers and stack. [Implemented]
+; - Trying to check for the presence of the PCI using a legacy method that primarily involves calling a BIOS function. [Implemented]
+; - Get memory map from BIOS.
+; - Get all VESA information.
+; - Inform BIOS of target processor mode. [Implemented]
+
+; Before transferring control over to the C entrypoint of this bootloader's 2nd stage, the following variables will be globally accessible at pre-determined addresses:
+; - was_pci_already_detected (1 byte)
+; - vesa_info (struct)
+; And the following variables will be passed on to the stack:
+; - A variable length array of MemoryMapEntry structs.
+; - A variable length array of VesaVideoModeInfo structs.
+
 %define START_ADDRESS 0x7e00
 ; This stage will be loaded 512 bytes after the bootloader's 1st stage in memory.
 org START_ADDRESS
@@ -6,6 +21,79 @@ bits 16
 
 jmp main
 %include "src/bootloader/shared.asm"
+
+struc VesaInfo
+  .Signature resb 4
+  .Version resw 1
+  .OEMNamePtr resd 1
+  .Capabilities resd 1
+
+  .VideoModesOffset resw 1
+  .VideoModesSegment resw 1
+
+  .CountOf64KBlocks resw 1
+  .OEMSoftwareRevision resw 1
+  .OEMVendorNamePtr resd 1
+  .OEMProductNamePtr resd 1
+  .OEMProductRevisionPtr resd 1
+  .Reserved resb 222
+  .OEMData resb 256
+endstruc
+
+struc VesaVideoModeInfo
+  .ModeAttributes resw 1
+  .FirstWindowAttributes resb 1
+  .SecondWindowAttributes resb 1
+  ; In KB.
+  .WindowGranularity resw 1
+  ; In KB.
+  .WindowSize resw 1
+  ; Will be 0 if not supported.
+  .FirstWindowSegment resw 1
+  ; Will be 0 if not supported.
+  .SecondWindowSegment resw 1
+  .WindowFunctionPtr resd 1
+  .BytesPerScanLine resw 1
+
+  ; Added in Revision 1.2.
+  ; In pixels(graphics)/columns(text)
+  .Width resw 1
+  ; In pixels(graphics)/columns(text)
+  .Height resw 1
+  ; In pixels.
+  .CharWidth resb 1
+  ; In pixels.
+  .CharHeight resb 1
+  .PlanesCount resb 1
+  .BitsPerPixel resb 1
+  .BanksCount resb 1
+  ; For reference: http://www.ctyme.com/intr/rb-0274.htm#Table82
+  .MemoryModel resb 1
+  ; In KB.
+  .BankSize resb 1
+  ; Count - 1
+  .ImagePagesCount resb 1
+  ; In Revision 1.0 to 2.0, this will be set to 0. In Revision 3.0, this will be set to 1.
+  .Reserved1 resb 1
+
+  .RedMaskSize resb 1
+  .RedFieldPosition resb 1
+  .GreenMaskSize resb 1
+  .GreenFieldPosition resb 1
+  .BlueMaskSize resb 1
+  .BlueFieldPosition resb 1
+  .ReservedMaskSize resb 1
+  .ReservedMaskPosition resb 1
+  .DirectColorModeInfo resb 1
+
+  ; Added in Revision 2.0.
+  .LinearFrameBufferAddress resd 1
+  .OffscreenMemoryOffset resd 1
+  ; In KB.
+  .OffscreenMemorySize resw 1
+  ; Available in Revision 3.0 but is useless for now.
+  .Reserved2 resb 206
+endstruc
 
 main:
   ; Make sure VGA text mode is enabled and set video mode to 80x25 color.
@@ -56,13 +144,80 @@ main:
   pop bx
   int 0x13
 
-  ; Enter protected mode.
+  ; Try to check for the presence of the PCI by using a legacy method.
+  mov ax, 0xb101
+  int 0x1a
+  // The hexadecimal value below corresponds to `PCI` in ASCII.
+  cmp edx, 0x504349
+  jne .on_pci_not_detected
+  mov [sp], 1
+  jmp .end_of_pci_check
+  
+  .on_pci_not_detected:
+    mov [sp], 0
+
+  .end_of_pci_check:
+
+  ; Get all VESA information.
+  mov ax, 0x4f00
+  mov di, vesa_info
+  int 0x10
+  cmp ax, 0x004f
+  jne .on_failed_to_get_vesa_info
+  ; Get all available video mode numbers.
+  mov bx, [vesa_info + VesaInfo.VideoModesOffset] ; bx will store the address of the current video mode entry (which is just a 16-bit value corresponding to the current video mode number).
+
+  .get_next_vesa_video_mode_info:
+    ; cx will store the current video mode number.
+    mov cx, [bx]
+    cmp cx, 0xffff
+    je .end_of_vesa_info_retrieval
+    mov ax, 0x4f01
+    sub sp, VesaVideoModeInfo_size
+    mov di, sp
+    int 0x10
+    add bx, 2
+    jmp .get_next_vesa_video_mode_info
+
+  .on_failed_to_get_vesa_info:
+    mov si, failed_to_get_vesa_info_msg
+    call real_mode.print_string
+
+  .end_of_vesa_info_retrieval:
+
+  ; Get memory map from BIOS.
+  mov eax, 0xE820
+  xor ebx, ebx
+  mov ecx, 24
+  mov es, bx
+  sub sp, 2
+  mov di, sp
+  int 0x15
+  cmp eax, 0x534D4150
+  jne .on_memory_map_bios_func_not_avail_or_supported
+  
+  .get_next_memory_map_entry:
+    cmp ebx, 0
+    je .end_of_get_memory_map_proc
+    mov eax, 0xE820
+    mov ecx, 24
+    sub sp, 24
+    mov di, sp
+    int 0x15
+    jmp .get_next_memory_map_entry
+
+  .on_memory_map_bios_func_not_avail_or_supported:
+    mov si, memory_map_bios_func_not_avail_or_supported_error_msg
+    call real_mode.print_string
+
+  .end_of_get_memory_map_proc:
+
   ; Disable all interrupts (except for non-maskable interrupts which cannot be disabled solely via software).
   cli
   call real_mode.enable_a20_line
   ; Load the GDT (Global Descriptor Table).
   lgdt [gdt_desc]
-  ; Set the lowest bit (bit 0) of the CR0 register to enable protected mode.
+  ; Enter protected mode by setting the lowest bit (bit 0) of the CR0 register.
   mov eax, cr0
   or eax, 1
   mov cr0, eax
@@ -325,6 +480,8 @@ real_mode.enable_a20_line:
 
 startup_msg: db "[Bootloader] Started.", ENDL, 0
 enabled_a20_line_msg: db "[Bootloader] Enabled A20 line.", ENDL, 0
+failed_to_get_vesa_info_msg: db "[Bootloader - Error] Failed to get VESA information.", ENDL, 0
+memory_map_bios_func_not_avail_or_supported_error_msg: db "[Bootloader - Error] BIOS memory map function not available or supported.", ENDL, 0
 gdt:
   ; The 0th (null) entry.
   dq 0
@@ -361,4 +518,9 @@ vga_text_buffer_current_offset:
   ; The offset from the start to the next unused location in the VGA text buffer.
   ; Note: As the maximum size of a VGA text buffer can be up to 256 KB (which when represented as a numeric literal takes up 3 bytes), the offset is represented as a 32-bit value.
   dd 0
-end:
+global vesa_info
+vesa_info: istruc VesaInfo
+  at VesaInfo.Signature, db "VESA"
+  times VesaInfo_size db 0
+iend
+; end:

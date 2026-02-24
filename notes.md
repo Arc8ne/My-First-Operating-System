@@ -1,14 +1,47 @@
-Assemble the bootloader's assembly code into a flat binary that can then be used to create a floppy disk image.
+# Overview of plan
+- Allow the kernel to be booted by a Multiboot2-compliant bootloader (e.g. GRUB).
+- Use `ext2` for the boot and root filesystems.
+- Allow the kernel to be booted by a Multiboot-compliant bootloader (e.g. versions of GRUB older than v2).
+- Make a dedicated bootloader that can load the kernel.
 
-Use the ExFAT filesystem for now.
+# TODOs - Kernel
+- Implement logging via the COM serial output port.
+ - Rationale: This could be useful for automated testing of the kernel and the OS.
+- Get framebuffer information from the Multiboot 2 compliant bootloader.
+- Implement printing of text to the screen.
+- Implement retrieval of text input.
+- Implement scrolling.
+- Implement driver for storage devices using the IDE storage interface.
+ - Rationale: This should be implemented because the storage interface used (by default) by the storage devices (e.g. hard disks) emulated by QEMU is IDE.
 
-# Steps
-1. The bootloader's 1st stage (512 bytes in size) loads its 2nd stage.
-1. Control is passed over to the bootloader's 2nd stage.
+# Targets
+## Bootloaders
+- Multiboot 2 compliant bootloaders (e.g. modern versions of GRUB).
+- Multiboot compliant bootloaders (e.g. legacy versions of GRUB before v2).
+- Dedicated bootloader for this OS.
+  - This target should only be supported if there really is a need for this OS to have its own dedicated bootloader.
+
+## Systems
+- BIOS
+- UEFI
+
+## Architectures
+- x86
+- x86-64
+
+Note: Targeting the x86 architecture is probably easier than targeting the x86_64 architecture so focus on the former one first.
+
+## Boot filesystems
+- ext2
+- FAT32 [Optional]
+
+# Steps (Bootloader -> Kernel)
+1. The bootloader's 1st stage (512 bytes in size) loads its 2nd stage. [Done]
+1. Control is passed over to the bootloader's 2nd stage. [Done]
 1. The bootloader's 2nd stage completes the tasks that can only be done via Assembly code in real (16-bit) mode.
-1. The bootloader's 2nd stage loads the kernel into memory.
+1. The bootloader's 2nd stage loads the kernel into memory. [Done]
 1. The bootloader's 2nd stage enables long (64-bit) mode if it is supported by the device, otherwise it enables protected (32-bit) mode if it is supported by the device, otherwise it ends execution with a message indicating that the device is not supported.
-1. Control is passed over to the kernel.
+1. Control is passed over to the kernel. [Done]
 1. The kernel completes the tasks that it needs to perform.
 
 ## Note
@@ -19,45 +52,109 @@ The bootloader is split in to 2 stages because more space is needed to contain t
 1. Kernel should be a file (either a raw binary file or an ELF executable) in a filesystem (i.e. FAT16, FAT32, ext4 etc.).
 
 # Bootloader sequence checklist
-- Setup 16-bit segment registers and stack. [Done, A, R]
+- Setup 16-bit segment registers and stack. [Done, R]
 - Print startup message. [Done]
-- Check presence of PCI, CPUID, MSRs.
-  - PCI
-  - CPUID
-  - MSRs
-- Enable and confirm enabled A20 line. [Done, A]
-- Load GDTR. [Done, A]
-- Inform BIOS of target processor mode. [Done, A, R]
+- Check presence of PCI. [R]
+  - 1 of the methods used for this task requires real mode as it involves calling a BIOS function.
+  - As of the time of writing, the part of this task requiring real mode has been implemented, the remainder can be implemented in C.
+- Check presence of CPUID.
+  - Checking for the availability of this instruction can be implemented via inline assembly in C but it is recommended to implement it in Assembly as the compiler can change EFLAGS at any time. This task does not require real mode.
+- Check presence of MSRs.
+  - Some Assembly might be required but real mode is not required.
+- Test whether A20 line is already enabled. [Done]
+ - Its easier for this task to be done in protected mode.
+ - As of the time of writing, this task was done in real mode.
+- Enable A20 line. [Done, R]
+ - 1 of the methods requires real mode as it primarily involves calling a BIOS function.
+- Load GDTR (Global Descriptor Table Register). [Done]
+- Inform BIOS of target processor mode. [Done, R]
 - Get memory map from BIOS. [R]
+  - This task can only be done in real mode because it relies on the IVT (Interrupt Vector Table) and BIOS data areas.
+  - However, it can be done outside of real mode if a temporary switch back to either real mode or virtual 8086 mode is performed.
 - Locate kernel in filesystem.
-- Allocate memory to load kernel image. [Done, A]
-- Load kernel image into buffer. [Done, A]
+- Allocate memory to load kernel image. [Done]
+- Load kernel image into buffer. [Done]
 - Enable graphics mode. [R]
 - Check kernel image ELF headers.
-- Enable long mode, if 64-bit. [A]
+- Enable long mode, if 64-bit.
 - Allocate and map memory for kernel segments.
-- Setup stack. [Done, A]
-- Setup COM serial output port. [R]
-- Setup IDT. [A]
+- Setup stack. [Done]
+- Setup COM serial output port.
+- Setup IDT.
 - Disable PIC.
 - Check presence of CPU features (NX, SMEP, x87, PCID, global pages, TCE, WP, MMX, SSE, SYSCALL), and enable them.
 - Assign a PAT to write combining.
 - Setup FS/GS base.
-- Load IDTR. [A]
-- Enable APIC and setup using information in ACPI tables. [A]
-- Setup GDT and TSS. [A]
+- Load IDTR.
+- Enable APIC and setup using information in ACPI tables.
+- Setup GDT and TSS.
 
 ## Legend
 A: Can only be done using Assembly code.
 R: Can only be done in real (16-bit) mode.
 
+# Characteristics of a task that requires real mode
+BIOS Interrupts: It requires at least 1 BIOS interrupt to be called.
+
+16-bit Code/Data: It assumes 16-bit operands and `<segment>:<offset>` addressing (e.g. `segment * 16 + offset`).
+
+Direct Hardware Access: It tries to write directly to VGA display memory at `0xA0000`, direct port I/O to legacy controllers, or depends on the 1 MB memory limit.
+
+Memory Footprint: It operates within the 1st 1 MB of physical RAM.
+
+# [Task] Get memory map from BIOS
+Invoke the `INT 0x15, AX = 0xE820` function.
+
+# [Task] Enabling graphics mode
+## Steps (for BIOS system)
+### Query VESA BIOS for support and modes
+1. Invoke `INT 0x10, AX=0x4F00` which queries VBE information to ensure it is supported.
+1. Invoke `INT 0x10, AX=0x4F01` which queries a specific VBE mode to confirm it supports a linear framebuffer (which is indicated by bit 7 of the mode attribute being set).
+### Configure and set the graphics mode
+1. Select a VBE mode number (e.g. a standard mode like `0x118` for `1024x768x32`).
+1. Enable Linear Framebuffer (LFB) by OR-ing the mode number with `0x4000` (e.g. `BX = 0x4118`).
+1. Invoke `INT 0x10, AX = 0x4F02, BX = <Mode number>` to set the mode.
+### Retrieve framebuffer information
+1. Invoke `INT 0x10, AX = 0x4F01` to get the framebuffer's 32-bit physical address (a.k.a the `physBasePtr` field).
+1. Note the number of bytes per scanline (a.k.a the pitch) as it is important for calculating a pixel's address since it may be larger than `<Width> * <Bytes per pixel>`.
+### Set up memory management (protected/long mode)
+1. Map the framebuffer's physical address into the kernel's virtual address space (typically using paging).
+ - The memory region must be mapped as write-combined or uncached for performance.
+
+For UEFI system, skip BIOS calls (`INT 0x10`) and use Graphics Output Protocol (GOP) which directly provides a linear framebuffer pointer during boot services.
+
+Pixel address formula: `<Framebuffer's starting address> + (<y> * <Pitch>) + (<x> * <Bytes per pixel>)`
+
+## Workings
+The following data structure is passed to the C entrypoint of the bootloader's 2nd stage:
+```
+struct {
+  uint8 does_bios_report_pci_present;
+  VideoControllerInformation video_controller_information;
+  uint32 num_video_modes;
+  VideoModeInformation video_mode_information_entries[num_video_modes];
+  uint32 num_memory_map_entries;
+  MemoryMapEntry memory_map_entries[num_memory_map_entries];
+}
+```
+
 ## PCI presence check
+### How to do this?
 The ordered list of methods below can be used to check if the PCI is present:
 1. Call the BIOS 0x1a interrupt.
 2. ACPI
 3. Assume its there and if not then inform the user that their computer is not supported.
 
-# TODOs
+For BIOS systems, BIOS interrupt `0x1a` with `AX = 0xb101` can be used to check if the system uses Configuration Space Access Mechanism 1 or 2. If this function does not exist, it will be uncertain if the system supports PCI or not.
+
+### Why is it highly recommended / required to do this?
+In order for an OS to know what hardware is plugged into a system, the PCI bus must be scanned.
+
+The PCI allows the OS to query devices to discover their Vendor ID (VID) and Device ID (DID) which are required to identify which drivers to load.
+
+### Procedure
+Check if the `BIOS 0x1a AX = 0xb101` function exists.
+Invoke the function if it exists.
 
 # Relevant information about `nasm`
 The 1st argument is the path to the file containing the assembly code that we want to assemble.

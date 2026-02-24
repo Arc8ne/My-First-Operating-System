@@ -57,7 +57,7 @@ local kernel_binary_size_in_bytes = get_num_bytes_in_file("bin/kernel.bin")
 local kernel_binary_size_in_sectors = math.ceil(
   kernel_binary_size_in_bytes / num_bytes_per_sector
 )
-exit_if_fail("nasm -f bin -o bin/bootloader/2nd-stage.bin -d KERNEL_SIZE_IN_SECTORS=" .. kernel_binary_size_in_sectors .. " src/bootloader/2nd-stage/main.asm")
+exit_if_fail("nasm -f bin -o bin/bootloader/2nd-stage.bin -d KERNEL_SIZE_IN_SECTORS=" .. kernel_binary_size_in_sectors .. " src/bootloader/2nd-stage.asm")
 local bootloader_stage_2_binary_size_in_bytes = get_num_bytes_in_file("bin/bootloader/2nd-stage.bin")
 local bootloader_stage_2_binary_size_in_sectors = math.ceil(
   bootloader_stage_2_binary_size_in_bytes / num_bytes_per_sector
@@ -69,7 +69,7 @@ local kernel_unaligned_start_address = 0x7e00 + bootloader_stage_2_binary_size_i
 local kernel_aligned_start_address = kernel_unaligned_start_address + (16 - (kernel_unaligned_start_address % 16))
 compile_kernel(kernel_aligned_start_address)
 -- Build the 1st stage (i.e. MBR) of the bootloader.
-exit_if_fail("nasm -f bin -o bin/bootloader/1st-stage.bin -d BOOTLOADER_STAGE_2_SIZE_IN_SECTORS=" .. bootloader_stage_2_binary_size_in_sectors .. " src/bootloader/1st-stage/main.asm")
+exit_if_fail("nasm -f bin -o bin/bootloader/1st-stage.bin -d BOOTLOADER_STAGE_2_SIZE_IN_SECTORS=" .. bootloader_stage_2_binary_size_in_sectors .. " src/bootloader/1st-stage.asm")
 -- Create a floppy disk image.
 exit_if_fail("cat bin/bootloader/1st-stage.bin bin/bootloader/2nd-stage.bin bin/kernel.bin > bin/floppy.img")
 -- We add this since we are simulating a 1_44 floppy disk (i.e. floppy disk with a total size of 1.44 MB).

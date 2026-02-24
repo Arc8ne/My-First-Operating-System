@@ -1,0 +1,56 @@
+global enable_paging
+
+.section .bss
+.align 16
+stack_bottom:
+; Stack size: 16 KiB
+.skip 16384
+stack_top:
+
+.section .text
+_start:
+  ; At this point of execution:
+  ; - The bootloader (i.e. GRUB) has loaded the kernel into 32-bit protected mode on an x86 system.
+  ; - Interrupts are disabled.
+  ; - Paging is disabled.
+  ; - The processor state is as defined in the Multiboot standard.
+  ; - The kernel has full control of the CPU.
+  ; - The kernel can only make use of hardware features and any code it provides as part of itself.
+  ; - There are no security restrictions, safeguards, and debugging mechanisms apart from what the kernel provides itself.
+
+  ; Set up the stack (which is required by higher-level languages like C).
+  mov esp, stack_bottom
+
+  ; At this stage, crucial processor state should be initialized before the high-level kernel is entered as it is best to minimize the early environment where crucial features are offline. Since the processor has not been fully initialized yet, features such as floating point instructions and instruction set extensions will not have been initialized yet. C++ features like global constructors and exceptions will require runtime support to work.
+  ; The following tasks should be completed at this stage:
+  ; - Loading the GDT.
+  ; - Enabling paging.
+  ; - Initialize the floating point instructions feature of the processor.
+  ; - Initialize the instruction set extensions of the processor.
+
+  ; The ABI requires the stack to be 16-byte aligned at the time of the call instruction (which pushes a return pointer that is 4 bytes in size afterwards). Since the stack was originally 16-byte aligned and we have pushed 0 (which is a multiple of 16) bytes of data onto it so far, the alignment has been preserved and thus the call is well-defined.
+  call kernel_main
+
+  cli
+  .halt:
+    hlt
+    jmp .halt
+
+; This function enables paging in protected mode.
+; Parameters:
+; - The page directory's physical address (4 bytes)
+enable_paging:
+  ; Load the CR3 register with the page directory's address.
+  mov eax, [esp + 4]
+  mov cr3, eax
+
+  ; Set the paging (PG) and protection (PE) bits of the CR0 register.
+  mov eax, cr0
+  or eax, 0b10000000000000000000000000000001
+  mov cr0, eax
+
+  ret
+
+; Set the size of the _start symbol to: Current address - Its starting address
+; This is done because it could be useful when debugging or implementing call tracing.
+.size _start, . - _start
