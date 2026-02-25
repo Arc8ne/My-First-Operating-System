@@ -4,7 +4,7 @@
 
 #define VGA_TEXT_BUFFER_START_ADDRESS 0xb8000
 #define NUM_BYTES_PER_ROW_IN_VGA_TEXT_BUFFER_IN_80x25_VIDEO_MODE 160
-#define COM_1_BASE_PORT 0x3F8
+#define COM1_BASE_PORT 0x3F8
 
 extern void enable_paging(uint32_t* page_directory_physical_address);
 
@@ -14,32 +14,44 @@ uint32_t page_directory[1024];
 uint8_t* vga_text_buffer_current_address = (uint8_t*)VGA_TEXT_BUFFER_START_ADDRESS;
 
 // --- Wrappers around the `outb` and `inb` Assembly instructions that allow the computer to perform I/O over ports ---
-inline void outb(uint16_t port, uint8_t byte) {
-  asm volatile ("outb %0, %1" : : "a"(val), "Nd"(port));
+inline void write_byte_to_io_port(uint16_t io_port, uint8_t byte) {
+  asm volatile ("outb %0, %1" : : "a"(byte), "Nd"(io_port));
 }
 
-inline uint8_t inb(uint16_t port) {
+inline uint8_t read_byte_from_io_port(uint16_t io_port) {
   uint8_t byte;
-  asm volatile("inb %0, %1" : : "Nd"(port), "a"(byte));
+  asm volatile("inb %0, %1" : : "Nd"(io_port), "a"(byte));
   return byte;
 }
 // --- End of section ---
 
-void init_serial() {
-  // Disable all interrupts.
-  outb(0, COM_1_BASE_PORT + 1);
-  // Enable DLAB (set baud rate divisor).
-  outb(0x80, COM_1_BASE_PORT + 3);
-  // Set divisor to 1 (lo byte) -> 115200 bps
-  outb(0x1, COM_1_BASE_PORT);
-  // (hi byte)
-  outb(0, COM_1_BASE_PORT + 1);
-  // 8 bits, no parity, one stop bit
-  outb(0x3, COM_1_BASE_PORT + 3);
-  // Enable FIFO, clear them, 14-byte threshold
-  outb(0xc7, COM_1_BASE_PORT + 2);
-  // Turn on DTR, RTS, and OUT2
-  outb(0xb, COM_1_BASE_PORT + 4);
+void init_com1_serial_port() {
+  // Disable all interrupts for the COM1 serial port by writing the specified byte to the IER (Interrupt Enable Register) of the UART (Universal Asynchronous Receiver-Transmitter) chip.
+  write_byte_to_io_port(COM1_BASE_PORT + 1, 0);
+  // Enable DLAB (Divisor Latch Access Bit) so that the baud rate divisor can be set by specifying the low and high bytes of the divisor via the ports at COM1_BASE_PORT and COM1_BASE_PORT + 1 respectively.
+  write_byte_to_io_port(COM1_BASE_PORT + 3, 0x80);
+  // Set the divisor to 1 in order to set the baud rate to 115200 bps. Formula to derive divisor: Divisor = 115200 / Desired baud rate
+  write_byte_to_io_port(COM1_BASE_PORT, 1); // Set the low byte of the divisor.
+  write_byte_to_io_port(COM1_BASE_PORT + 1, 0); // Set the high byte of the divisor.
+  // Disable DLAB and configure the UART communication settings:
+  // - Word length: 8 bits
+  // - Number of stop bits: 1
+  // - Parity: None
+  write_byte_to_io_port(COM1_BASE_PORT + 3, 3);
+  // Enable the 16550 UART FIFOs, clear them, and set the number of bytes required to trigger an interrupt to 14.
+  write_byte_to_io_port(COM1_BASE_PORT + 2, 0xc7);
+  // Turn on the DTR and RTS signal lines and set the OUT2 bit (bit 3) to enable interrupts from the UART to the interrupt controller (PIC/IOAPIC).
+  write_byte_to_io_port(COM1_BASE_PORT + 4, 0xb);
+  // Re-enable all interrupts (the `Received Data Available` and `Transmitter Holding Register Empty` interrupts) for the COM1 serial port.
+  write_byte_to_io_port(COM1_BASE_PORT + 1, 3);
+}
+
+void write_to_com1_serial_port(uint8_t* chars) {
+  uint8_t* current_char_ptr = chars;
+  while (*current_char_ptr != 0) {
+    write_byte_to_io_port(COM1_BASE_PORT, *current_char_ptr);
+    current_char_ptr += sizeof(uint8_t);
+  }
 }
 
 void print_with_color(char* str_ptr, uint8_t color_code) {
@@ -73,5 +85,7 @@ extern void kernel_main(/* uint16_t vga_text_buffer_current_offset */) {
   // vga_text_buffer_current_address += vga_text_buffer_current_offset;
   // print("[Kernel] Started.\n");
 
+  init_com1_serial_port();
+  write_to_com1_serial_port("[Kernel] Initialized COM 1 serial port.");
   // enable_paging(page_directory);
 }
