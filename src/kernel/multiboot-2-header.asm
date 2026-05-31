@@ -31,5 +31,3 @@ dd 0
 dd 8
 
 multiboot_2_header_end:
-
-%include "./boot-stub.asm"

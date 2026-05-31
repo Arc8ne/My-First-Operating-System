@@ -4,6 +4,11 @@
 - Allow the kernel to be booted by a Multiboot-compliant bootloader (e.g. versions of GRUB older than v2).
 - Make a dedicated bootloader that can load the kernel.
 
+# New build process
+- Compile the kernel.
+  - Note: The linker script will either assume that the starting physical address of the kernel in memory will be 1 MiB (commonly assumed when targeting BIOS systems) or 2 MiB (reliable for both BIOS and UEFI systems).
+- Generate a bootable ISO containing both the GRUB bootloader and the kernel.
+
 # TODOs - Kernel
 - Implement logging via the COM serial output port.
  - Rationale: This could be useful for automated testing of the kernel and the OS.
@@ -50,6 +55,11 @@ The bootloader is split in to 2 stages because more space is needed to contain t
 # Requirements that a kernel should meet so that it can be loaded by a custom bootloader or an existing bootloader (e.g. GRUB)
 1. Kernel should be multiboot compliant.
 1. Kernel should be a file (either a raw binary file or an ELF executable) in a filesystem (i.e. FAT16, FAT32, ext4 etc.).
+
+# Multiboot and Multiboot 2 protocols
+By default, a Multiboot compliant bootloader loads the kernel at physical address `0x100000` (at the 1 MiB mark) in memory.
+
+By default, a Multiboot 2 compliant bootloader (i.e. GRUB) reads the ELF headers or the `load_addr` tag in the Multiboot 2 header to determine where to load the kernel at in memory. It typically loads the kernel at physical address `0x100000` (1 MiB).
 
 # Bootloader sequence checklist
 - Setup 16-bit segment registers and stack. [Done, R]

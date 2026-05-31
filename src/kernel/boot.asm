@@ -1,13 +1,19 @@
-global enable_paging
+%include "src/kernel/multiboot-header.asm"
 
-.section .bss
-.align 16
+extern kernel_main
+
+; Export all functions defined in this file with their respective sizes as it is required by the ELF format. This is done because it could be useful when debugging or implementing call tracing.
+global _start:function _start_func_size
+global enable_paging:function enable_paging_func_size
+
+section .bss
+align 16
 stack_bottom:
 ; Stack size: 16 KiB
-.skip 16384
+resb 16384
 stack_top:
 
-.section .text
+section .text
 _start:
   ; At this point of execution:
   ; - The bootloader (i.e. GRUB) has loaded the kernel into 32-bit protected mode on an x86 system.
@@ -35,6 +41,7 @@ _start:
   .halt:
     hlt
     jmp .halt
+_start_func_size equ $ - _start
 
 ; This function enables paging in protected mode.
 ; Parameters:
@@ -50,7 +57,4 @@ enable_paging:
   mov cr0, eax
 
   ret
-
-; Set the size of the _start symbol to: Current address - Its starting address
-; This is done because it could be useful when debugging or implementing call tracing.
-.size _start, . - _start
+enable_paging_func_size equ $ - enable_paging
