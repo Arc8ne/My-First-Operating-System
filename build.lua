@@ -99,7 +99,7 @@ end
 -- This is the function used to build a Multiboot / Multiboot 2 compliant kernel that can be loaded by a bootloader that is compliant with either one or both of those protocols (i.e. GRUB).
 local build_kernel = function()
   utils.run_and_exit_if_fail("nasm -f elf32 src/kernel/boot.asm -o bin/kernel-boot.o")
-  utils.run_and_exit_if_fail("clang --target=i368-elf -m32 -ffreestanding -fno-builtin -nostdlib -fno-PIC -c src/kernel/*.c -o bin/kernel.o")
+  utils.run_and_exit_if_fail("clang --target=i386-elf -m32 -ffreestanding -fno-builtin -nostdlib -fno-PIC -c src/kernel/*.c -o bin/kernel.o")
   utils.run_and_exit_if_fail("ld -m elf_i386 -T kernel.ld -o bin/kernel.elf bin/kernel-boot.o bin/kernel.o")
   -- Converts the outputted kernel binary from an ELF32 binary to a raw binary.
   -- Note: This is not needed currently as it is intended for the kernel to be built as an ELF binary.
