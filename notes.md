@@ -205,6 +205,9 @@ Current row number = Current VGA text buffer offset % (Number of bytes per row -
 Next row number = Current row number + 1 = 0 + 1 = 1
 Offset to start of next line in VGA text buffer = Next row number * Number of bytes per row = 1 * 160 = 160
 
+# BP register
+BP points to the byte before the first byte in the stack (i.e. the base of the stack).
+
 # Bug/issue reports
 ## 1
 Issues:

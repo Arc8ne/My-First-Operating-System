@@ -1,4 +1,8 @@
 bx_enh_dbg.ini
 bochs-log.txt
-bin
-internal
+
+bin/*
+!bin/os-iso-root
+!bin/os-iso-root/boot
+bin/os-iso-root/boot/*
+!bin/os-iso-root/boot/grub
