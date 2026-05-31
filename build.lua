@@ -100,16 +100,17 @@ end
 local build_kernel = function()
   utils.run_and_exit_if_fail("nasm -f elf32 src/kernel/boot.asm -o bin/kernel-boot.o")
   utils.run_and_exit_if_fail("clang --target=i386-elf -m32 -ffreestanding -fno-builtin -nostdlib -fno-PIC -c src/kernel/*.c -o bin/kernel.o")
-  utils.run_and_exit_if_fail("ld -m elf_i386 -T kernel.ld -o bin/kernel.elf bin/kernel-boot.o bin/kernel.o")
+  utils.run_and_exit_if_fail("ld -m elf_i386 -T kernel.ld -o bin/os-iso-root/boot/kernel.elf bin/kernel-boot.o bin/kernel.o")
   -- Converts the outputted kernel binary from an ELF32 binary to a raw binary.
   -- Note: This is not needed currently as it is intended for the kernel to be built as an ELF binary.
   -- utils.run_and_exit_if_fail("objcopy -O binary bin/kernel.elf bin/kernel.bin")
 end
 
 -- Note: Unlike the `grub-mkrescue` command included in standard Linux distributions, there is no standard tool provided by default on Windows for creating ISO images via the command line. As a result, this script will need to be run in a Linux environment until support for Windows is implemented for this function.
-local create_iso_img = function()
+local create_bootable_iso = function()
   utils.run_and_exit_if_fail("grub-mkrescue -o bin/os.iso bin/os-iso-root")
 end
 
 build_kernel()
+create_bootable_iso()
 utils.print_green_text("Build succeeded.")

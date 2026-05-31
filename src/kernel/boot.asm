@@ -3,7 +3,7 @@
 extern kernel_main
 
 ; Export all functions defined in this file with their respective sizes as it is required by the ELF format. This is done because it could be useful when debugging or implementing call tracing.
-global _start:function _start_func_size
+global start:function start_func_size
 global enable_paging:function enable_paging_func_size
 
 section .bss
@@ -14,7 +14,7 @@ resb 16384
 stack_top:
 
 section .text
-_start:
+start:
   ; At this point of execution:
   ; - The bootloader (i.e. GRUB) has loaded the kernel into 32-bit protected mode on an x86 system.
   ; - Interrupts are disabled.
@@ -41,7 +41,7 @@ _start:
   .halt:
     hlt
     jmp .halt
-_start_func_size equ $ - _start
+start_func_size equ $ - start
 
 ; This function enables paging in protected mode.
 ; Parameters:

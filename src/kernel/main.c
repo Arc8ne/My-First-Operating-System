@@ -14,11 +14,11 @@ uint32_t page_directory[1024];
 uint8_t* vga_text_buffer_current_address = (uint8_t*)VGA_TEXT_BUFFER_START_ADDRESS;
 
 // --- Wrappers around the `outb` and `inb` Assembly instructions that allow the computer to perform I/O over ports ---
-inline void write_byte_to_io_port(uint16_t io_port, uint8_t byte) {
+extern inline void write_byte_to_io_port(uint16_t io_port, uint8_t byte) {
   asm volatile ("outb %0, %1" : : "a"(byte), "Nd"(io_port));
 }
 
-inline uint8_t read_byte_from_io_port(uint16_t io_port) {
+extern inline uint8_t read_byte_from_io_port(uint16_t io_port) {
   uint8_t byte;
   asm volatile("inb %0, %1" : : "Nd"(io_port), "a"(byte));
   return byte;
@@ -47,10 +47,9 @@ void init_com1_serial_port() {
 }
 
 void write_to_com1_serial_port(uint8_t* chars) {
-  uint8_t* current_char_ptr = chars;
-  while (*current_char_ptr != 0) {
-    write_byte_to_io_port(COM1_BASE_PORT, *current_char_ptr);
-    current_char_ptr += sizeof(uint8_t);
+  while (*chars != 0) {
+    write_byte_to_io_port(COM1_BASE_PORT, *chars);
+    chars += sizeof(uint8_t);
   }
 }
 
@@ -79,13 +78,8 @@ void print(char* str_ptr) {
   print_with_color(str_ptr, 0xf);
 }
 
-// TODO: Remove the dedicated bootloader's dependency on this attribute as it is not usually needed.
-__attribute__((section(".text.kernel_main")))
-extern void kernel_main(/* uint16_t vga_text_buffer_current_offset */) {
-  // vga_text_buffer_current_address += vga_text_buffer_current_offset;
-  // print("[Kernel] Started.\n");
-
+extern void kernel_main() {
   init_com1_serial_port();
-  write_to_com1_serial_port("[Kernel] Initialized COM 1 serial port.");
+  write_to_com1_serial_port("[Kernel] Initialized COM 1 serial port.\n");
   // enable_paging(page_directory);
 }
