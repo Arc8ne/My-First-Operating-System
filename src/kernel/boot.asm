@@ -5,7 +5,6 @@ extern kernel_main
 
 ; Export all functions defined in this file with their respective sizes as it is required by the ELF format. This is done because it could be useful when debugging or implementing call tracing.
 global start:function start_func_size
-global load_gdt:function load_gdt_func_size
 global enable_paging:function enable_paging_func_size
 
 section .text
@@ -58,7 +57,6 @@ load_gdt:
     mov gs, ax
     mov ss, ax
     ret
-load_gdt_func_size equ $ - load_gdt
 
 ; This function enables paging in protected mode.
 ; Parameters:

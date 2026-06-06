@@ -6,7 +6,6 @@
 #define NUM_BYTES_PER_ROW_IN_VGA_TEXT_BUFFER_IN_80x25_VIDEO_MODE 160
 #define COM1_BASE_PORT 0x3F8
 
-extern void load_gdt();
 extern void enable_paging(uint32_t* page_directory_physical_address);
 
 uint8_t* vga_text_buffer_current_address = (uint8_t*)VGA_TEXT_BUFFER_START_ADDRESS;
