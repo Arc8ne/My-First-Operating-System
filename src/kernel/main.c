@@ -6,12 +6,14 @@
 #define NUM_BYTES_PER_ROW_IN_VGA_TEXT_BUFFER_IN_80x25_VIDEO_MODE 160
 #define COM1_BASE_PORT 0x3F8
 
+extern void load_gdt();
 extern void enable_paging(uint32_t* page_directory_physical_address);
 
-// Note: Add `__attribute__((packed))` if this global variable is a struct.
-__attribute__((aligned(4096)))
-uint32_t page_directory[1024];
 uint8_t* vga_text_buffer_current_address = (uint8_t*)VGA_TEXT_BUFFER_START_ADDRESS;
+
+// Note: Add `__attribute__((packed))` if this global variable is a struct.
+// __attribute__((aligned(4096)))
+// uint32_t page_directory[1024];
 
 // --- Wrappers around the `outb` and `inb` Assembly instructions that allow the computer to perform I/O over ports ---
 extern inline void write_byte_to_io_port(uint16_t io_port, uint8_t byte) {
@@ -53,6 +55,11 @@ void write_to_com1_serial_port(uint8_t* chars) {
   }
 }
 
+void write_line_to_com1_serial_port(uint8_t* chars) {
+  write_to_com1_serial_port(chars);
+  write_byte_to_io_port(COM1_BASE_PORT, '\n');
+}
+
 void print_with_color(char* str_ptr, uint8_t color_code) {
   uint16_t i = 0;
   while (true) {
@@ -80,6 +87,7 @@ void print(char* str_ptr) {
 
 extern void kernel_main() {
   init_com1_serial_port();
-  write_to_com1_serial_port("[Kernel] Initialized COM 1 serial port.\n");
+  write_line_to_com1_serial_port("[Kernel] Initialized COM 1 serial port.");
+  // TODO: Initialize the IDT (Interrupt Descriptor Table).
   // enable_paging(page_directory);
 }
